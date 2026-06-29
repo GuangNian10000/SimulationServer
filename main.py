@@ -69,6 +69,13 @@ routes = [
     }
 ]
 
+# 模拟机器人位置数据
+robot_position = {
+    "x": 0.0,
+    "y": 0.0,
+    "yaw": 0.0
+}
+
 def get_local_ip():
     """获取本机局域网 IP 地址"""
     try:
@@ -126,14 +133,21 @@ async def handle_client(reader, writer):
 
                 # 拦截目标为 arm 的报文，交由本地业务处理。
                 if to_node == "arm":
-                    topic = msg_json.get('topic')
-                    msg_type = msg_json.get('type')
+                    raw_type = msg_json.get('type', '')
+                    topic = msg_json.get('topic', '')
+
+                    # 兼容 "type/topic" 格式，例如 "slam/set_position"
+                    if not topic and '/' in raw_type:
+                        msg_type, topic = raw_type.split('/', 1)
+                    else:
+                        msg_type = raw_type
+
                     logging.info(f"ARM 业务逻辑处理: type={msg_type}, topic={topic}")
 
                     response = None
 
                     # 1. 构造通用心跳回执。
-                    if topic == "connection":
+                    if topic == "connection" or msg_type == "heartbeat":
                         response = {
                             "from": "arm",
                             "to": from_node,
@@ -217,7 +231,29 @@ async def handle_client(reader, writer):
                                 response = {"from": "arm", "to": from_node, "type": "location", "topic": "error", "status": "error", "msg": {"errorMessage": f"点位 {pid} 不存在"}}
                         elif topic == "start_point":
                             pid = msg_json.get("msg", {}).get("pointId")
-                            response = {"from": "arm", "to": from_node, "type": "location", "topic": "start_point", "status": "ok", "msg": {"pointId": pid, "message": "已开始导航"}}
+                            if pid == "unreachable":
+                                response = {
+                                    "from": "arm", "to": from_node, "type": "location", "topic": "error",
+                                    "status": "error", "msg": {"errorMessage": "目标点不可达"}
+                                }
+                            else:
+                                response = {
+                                    "from": "arm", "to": from_node, "type": "location",
+                                    "topic": "start_point", "status": "ok",
+                                    "msg": {"pointId": pid, "message": "已开始导航"}
+                                }
+                                # 模拟导航到达通知
+                                async def delayed_point_push():
+                                    await asyncio.sleep(2)
+                                    push_msg = {
+                                        "from": "arm", "to": from_node, "type": "navigation",
+                                        "topic": "status_push", "status": "ok",
+                                        "msg": {"state": "COMPLETED", "pointId": pid}
+                                    }
+                                    writer.write((json.dumps(push_msg) + '\n').encode('utf-8'))
+                                    await writer.drain()
+                                    logging.info(f"\033[1;35m[导航通知]\033[0m -> {from_node}: {push_msg}")
+                                asyncio.create_task(delayed_point_push())
 
                     # 3. 路线管理接口 (2dpath type)
                     elif msg_type == "2dpath":
@@ -270,13 +306,35 @@ async def handle_client(reader, writer):
                                 response = {"from": "arm", "to": from_node, "type": "2dpath", "topic": "delete_route", "status": "success", "msg": {"routeId": rid}}
                             else:
                                 response = {"from": "arm", "to": from_node, "type": "2dpath", "topic": "error", "status": "error", "msg": "路线不存在"}
+                        # 辅助点位操作 (2dpath/add_point, query_point, etc.)
+                        elif topic == "query_point":
+                            response = {"from": "arm", "to": from_node, "type": "2dpath", "topic": "query_point", "status": "ok", "msg": endpoints}
+                        elif topic == "add_point":
+                            new_msg = msg_json.get("msg", {})
+                            new_point = {
+                                "id": len(endpoints) + 1,
+                                "pointId": f"point_{uuid.uuid4().hex[:8]}",
+                                "name": new_msg.get("name", "未命名"),
+                                "x": new_msg.get("x", 0.0),
+                                "y": new_msg.get("y", 0.0),
+                                "yaw": new_msg.get("yaw", 0.0),
+                                "pointType": new_msg.get("pointType", 0),
+                                "status": "可达",
+                                "isReachable": True
+                            }
+                            endpoints.append(new_point)
+                            response = {"from": "arm", "to": from_node, "type": "2dpath", "topic": "add_point", "status": "success", "msg": new_point}
+                        elif topic == "delete_point":
+                            pid = msg_json.get("msg", {}).get("pointId")
+                            endpoints[:] = [p for p in endpoints if p["pointId"] != pid]
+                            response = {"from": "arm", "to": from_node, "type": "2dpath", "topic": "delete_point", "status": "success", "msg": {"pointId": pid}}
 
                     # 4. 导航控制接口 (navigation type)
                     elif msg_type == "navigation":
                         if topic == "start_route":
                             rid = msg_json.get("msg", {}).get("routeId")
                             response = {"from": "arm", "to": from_node, "type": "navigation", "topic": "start_route", "status": "success", "msg": {"routeId": rid}}
-                            # 模拟异步通知：1秒后发送完成通知
+                            # 模拟异步通知：2秒后发送完成通知
                             async def delayed_push():
                                 await asyncio.sleep(2)
                                 push_msg = {
@@ -295,7 +353,7 @@ async def handle_client(reader, writer):
                                 "msg": {"state": "IDLE", "routeId": ""}
                             }
 
-                    # 5. slam 接口处理 (地图配置)
+                    # 5. slam 接口处理 (地图配置与位置)
                     elif msg_type == "slam":
                         if topic == "map_config":
                             local_ip = get_local_ip()
@@ -314,6 +372,39 @@ async def handle_client(reader, writer):
                                     "free_thresh": 0.196
                                 }
                             }
+                        elif topic in ["getPositionh", "get_position"]:
+                            response = {
+                                "from": "arm",
+                                "to": from_node,
+                                "type": "slam",
+                                "topic": topic,
+                                "status": "ok",
+                                "msg": robot_position
+                            }
+                        elif topic in ["setPosition", "set_position"]:
+                            pos_data = msg_json.get("msg", {})
+                            try:
+                                # 处理前端可能发送的字符串格式坐标
+                                robot_position["x"] = float(pos_data.get("x", 0.0))
+                                robot_position["y"] = float(pos_data.get("y", 0.0))
+                                robot_position["yaw"] = float(pos_data.get("yaw", 0.0))
+                                response = {
+                                    "from": "arm",
+                                    "to": from_node,
+                                    "type": "slam",
+                                    "topic": topic,
+                                    "status": "ok",
+                                    "msg": {}
+                                }
+                            except (ValueError, TypeError):
+                                response = {
+                                    "from": "arm",
+                                    "to": from_node,
+                                    "type": "slam",
+                                    "topic": "error",
+                                    "status": "error",
+                                    "msg": "位置参数格式错误"
+                                }
 
                     if response:
                         if "id" not in response and "id" in msg_json:
