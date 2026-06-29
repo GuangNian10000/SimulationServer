@@ -148,7 +148,7 @@ async def handle_client(reader, writer):
                             response = {
                                 "from": "arm",
                                 "to": from_node,
-                                "op": "location",
+                                "type": "location",
                                 "topic": "get_endpoints",
                                 "status": "ok",
                                 "msg": endpoints
@@ -175,7 +175,7 @@ async def handle_client(reader, writer):
                             response = {
                                 "from": "arm",
                                 "to": from_node,
-                                "op": "location",
+                                "type": "location",
                                 "topic": "add_endpoint",
                                 "status": "ok",
                                 "msg": new_point
@@ -200,30 +200,30 @@ async def handle_client(reader, writer):
                                 response = {
                                     "from": "arm",
                                     "to": from_node,
-                                    "op": "location",
+                                    "type": "location",
                                     "topic": "update_endpoint",
                                     "status": "ok",
                                     "msg": found_p
                                 }
                             else:
-                                response = {"from": "arm", "to": from_node, "op": "location", "topic": "error", "status": "error", "msg": {"errorMessage": f"点位 {pid} 不存在"}}
+                                response = {"from": "arm", "to": from_node, "type": "location", "topic": "error", "status": "error", "msg": {"errorMessage": f"点位 {pid} 不存在"}}
                         elif topic == "delete_endpoint":
                             pid = msg_json.get("msg", {}).get("pointId")
                             original_len = len(endpoints)
                             endpoints[:] = [p for p in endpoints if p["pointId"] != pid]
                             if len(endpoints) < original_len:
-                                response = {"from": "arm", "to": from_node, "op": "location", "topic": "delete_endpoint", "status": "ok", "msg": {"pointId": pid}}
+                                response = {"from": "arm", "to": from_node, "type": "location", "topic": "delete_endpoint", "status": "ok", "msg": {"pointId": pid}}
                             else:
-                                response = {"from": "arm", "to": from_node, "op": "location", "topic": "error", "status": "error", "msg": {"errorMessage": f"点位 {pid} 不存在"}}
+                                response = {"from": "arm", "to": from_node, "type": "location", "topic": "error", "status": "error", "msg": {"errorMessage": f"点位 {pid} 不存在"}}
                         elif topic == "start_point":
                             pid = msg_json.get("msg", {}).get("pointId")
-                            response = {"from": "arm", "to": from_node, "op": "location", "topic": "start_point", "status": "ok", "msg": {"pointId": pid, "message": "已开始导航"}}
+                            response = {"from": "arm", "to": from_node, "type": "location", "topic": "start_point", "status": "ok", "msg": {"pointId": pid, "message": "已开始导航"}}
 
                     # 3. 路线管理接口 (2dpath type)
                     elif msg_type == "2dpath":
                         if topic == "get_routes":
                             response = {
-                                "from": "arm", "to": from_node, "op": "2dpath",
+                                "from": "arm", "to": from_node, "type": "2dpath",
                                 "topic": "get_routes", "status": "ok", "msg": routes
                             }
                         elif topic == "add_route":
@@ -242,7 +242,7 @@ async def handle_client(reader, writer):
                                 "loopCount": new_msg.get("loopCount", 1)
                             }
                             routes.append(new_route)
-                            response = {"from": "arm", "to": from_node, "op": "2dpath", "topic": "add_route", "status": "success", "msg": new_route}
+                            response = {"from": "arm", "to": from_node, "type": "2dpath", "topic": "add_route", "status": "success", "msg": new_route}
                         elif topic == "update_route":
                             update_msg = msg_json.get("msg", {})
                             rid = update_msg.get("routeId")
@@ -259,28 +259,28 @@ async def handle_client(reader, writer):
                                 if "points" in update_msg:
                                     found_r["pointIds"] = ",".join(points_list)
                                     found_r["pointCount"] = len(points_list)
-                                response = {"from": "arm", "to": from_node, "op": "2dpath", "topic": "update_route", "status": "success", "msg": found_r}
+                                response = {"from": "arm", "to": from_node, "type": "2dpath", "topic": "update_route", "status": "success", "msg": found_r}
                             else:
-                                response = {"from": "arm", "to": from_node, "op": "2dpath", "topic": "error", "status": "error", "msg": "路线不存在"}
+                                response = {"from": "arm", "to": from_node, "type": "2dpath", "topic": "error", "status": "error", "msg": "路线不存在"}
                         elif topic == "delete_route":
                             rid = msg_json.get("msg", {}).get("routeId")
                             original_len = len(routes)
                             routes[:] = [r for r in routes if r["routeId"] != rid]
                             if len(routes) < original_len:
-                                response = {"from": "arm", "to": from_node, "op": "2dpath", "topic": "delete_route", "status": "success", "msg": {"routeId": rid}}
+                                response = {"from": "arm", "to": from_node, "type": "2dpath", "topic": "delete_route", "status": "success", "msg": {"routeId": rid}}
                             else:
-                                response = {"from": "arm", "to": from_node, "op": "2dpath", "topic": "error", "status": "error", "msg": "路线不存在"}
+                                response = {"from": "arm", "to": from_node, "type": "2dpath", "topic": "error", "status": "error", "msg": "路线不存在"}
 
                     # 4. 导航控制接口 (navigation type)
                     elif msg_type == "navigation":
                         if topic == "start_route":
                             rid = msg_json.get("msg", {}).get("routeId")
-                            response = {"from": "arm", "to": from_node, "op": "navigation", "topic": "start_route", "status": "success", "msg": {"routeId": rid}}
+                            response = {"from": "arm", "to": from_node, "type": "navigation", "topic": "start_route", "status": "success", "msg": {"routeId": rid}}
                             # 模拟异步通知：1秒后发送完成通知
                             async def delayed_push():
                                 await asyncio.sleep(2)
                                 push_msg = {
-                                    "from": "arm", "to": from_node, "op": "navigation",
+                                    "from": "arm", "to": from_node, "type": "navigation",
                                     "topic": "status_push", "status": "ok",
                                     "msg": {"state": "COMPLETED", "routeId": rid}
                                 }
@@ -290,7 +290,7 @@ async def handle_client(reader, writer):
                             asyncio.create_task(delayed_push())
                         elif topic == "get_status":
                             response = {
-                                "from": "arm", "to": from_node, "op": "navigation",
+                                "from": "arm", "to": from_node, "type": "navigation",
                                 "topic": "get_status", "status": "ok",
                                 "msg": {"state": "IDLE", "routeId": ""}
                             }
