@@ -121,7 +121,7 @@ async def handle_client(reader, writer):
                             "from": "arm",
                             "to": from_node,
                             "type": "heartbeat",
-                            "topic": "connection_ack",
+                            "topic": "connection",
                             "msg": {"status": "ok"}
                         }
 
@@ -218,9 +218,9 @@ async def handle_client(reader, writer):
                                 "status": "ok",
                                 "msg": {
                                     "image": f"http://{local_ip}:8080/maps.pgm",
-                                    "resolution": 0.05,
-                                    "origin": [0.0, 0.0, 0.0],
-                                    "negate": 0.0,
+                                    "resolution": 0.050000,
+                                    "origin": [-23.750000, -21.400000, 0],
+                                    "negate": 0,
                                     "occupied_thresh": 0.65,
                                     "free_thresh": 0.196
                                 }
