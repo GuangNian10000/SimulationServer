@@ -4,6 +4,7 @@ import logging
 import uuid
 import socket
 import threading
+import time
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 
 # 配置日志格式，输出时间、级别及上下文。
@@ -49,6 +50,22 @@ endpoints = [
         "isReachable": True,
         "stayTime": 5.0,
         "needRotate": False
+    }
+]
+
+# 模拟路线假数据
+routes = [
+    {
+        "id": 1,
+        "routeId": "route_001",
+        "name": "每日巡检路线",
+        "description": "覆盖办公区和休息区的例行巡检",
+        "pointIds": "point_1,point_2",
+        "pointCount": 2,
+        "isActive": True,
+        "createTime": int(time.time() * 1000),
+        "updateTime": int(time.time() * 1000),
+        "loopCount": 2
     }
 ]
 
@@ -202,11 +219,83 @@ async def handle_client(reader, writer):
                             pid = msg_json.get("msg", {}).get("pointId")
                             response = {"from": "arm", "to": from_node, "op": "location", "topic": "start_point", "status": "ok", "msg": {"pointId": pid, "message": "已开始导航"}}
 
-                    # 3. 2dpath 接口处理 (辅助接口)
+                    # 3. 路线管理接口 (2dpath type)
                     elif msg_type == "2dpath":
-                         response = {"from": "arm", "to": from_node, "op": "2dpath", "topic": topic, "status": "ok", "msg": {}}
+                        if topic == "get_routes":
+                            response = {
+                                "from": "arm", "to": from_node, "op": "2dpath",
+                                "topic": "get_routes", "status": "ok", "msg": routes
+                            }
+                        elif topic == "add_route":
+                            new_msg = msg_json.get("msg", {})
+                            points_list = new_msg.get("points", [])
+                            new_route = {
+                                "id": len(routes) + 1,
+                                "routeId": f"route_{uuid.uuid4().hex[:8]}",
+                                "name": new_msg.get("name", "未命名路线"),
+                                "description": new_msg.get("description", ""),
+                                "pointIds": ",".join(points_list),
+                                "pointCount": len(points_list),
+                                "isActive": new_msg.get("isActive", True),
+                                "createTime": int(time.time() * 1000),
+                                "updateTime": int(time.time() * 1000),
+                                "loopCount": new_msg.get("loopCount", 1)
+                            }
+                            routes.append(new_route)
+                            response = {"from": "arm", "to": from_node, "op": "2dpath", "topic": "add_route", "status": "success", "msg": new_route}
+                        elif topic == "update_route":
+                            update_msg = msg_json.get("msg", {})
+                            rid = update_msg.get("routeId")
+                            found_r = next((r for r in routes if r["routeId"] == rid), None)
+                            if found_r:
+                                points_list = update_msg.get("points", [])
+                                found_r.update({
+                                    "name": update_msg.get("name", found_r["name"]),
+                                    "description": update_msg.get("description", found_r["description"]),
+                                    "isActive": update_msg.get("isActive", found_r["isActive"]),
+                                    "loopCount": update_msg.get("loopCount", found_r["loopCount"]),
+                                    "updateTime": int(time.time() * 1000)
+                                })
+                                if "points" in update_msg:
+                                    found_r["pointIds"] = ",".join(points_list)
+                                    found_r["pointCount"] = len(points_list)
+                                response = {"from": "arm", "to": from_node, "op": "2dpath", "topic": "update_route", "status": "success", "msg": found_r}
+                            else:
+                                response = {"from": "arm", "to": from_node, "op": "2dpath", "topic": "error", "status": "error", "msg": "路线不存在"}
+                        elif topic == "delete_route":
+                            rid = msg_json.get("msg", {}).get("routeId")
+                            original_len = len(routes)
+                            routes[:] = [r for r in routes if r["routeId"] != rid]
+                            if len(routes) < original_len:
+                                response = {"from": "arm", "to": from_node, "op": "2dpath", "topic": "delete_route", "status": "success", "msg": {"routeId": rid}}
+                            else:
+                                response = {"from": "arm", "to": from_node, "op": "2dpath", "topic": "error", "status": "error", "msg": "路线不存在"}
 
-                    # 4. slam 接口处理 (地图配置)
+                    # 4. 导航控制接口 (navigation type)
+                    elif msg_type == "navigation":
+                        if topic == "start_route":
+                            rid = msg_json.get("msg", {}).get("routeId")
+                            response = {"from": "arm", "to": from_node, "op": "navigation", "topic": "start_route", "status": "success", "msg": {"routeId": rid}}
+                            # 模拟异步通知：1秒后发送完成通知
+                            async def delayed_push():
+                                await asyncio.sleep(2)
+                                push_msg = {
+                                    "from": "arm", "to": from_node, "op": "navigation",
+                                    "topic": "status_push", "status": "ok",
+                                    "msg": {"state": "COMPLETED", "routeId": rid}
+                                }
+                                writer.write((json.dumps(push_msg) + '\n').encode('utf-8'))
+                                await writer.drain()
+                                logging.info(f"\033[1;35m[异步通知]\033[0m -> {from_node}: {push_msg}")
+                            asyncio.create_task(delayed_push())
+                        elif topic == "get_status":
+                            response = {
+                                "from": "arm", "to": from_node, "op": "navigation",
+                                "topic": "get_status", "status": "ok",
+                                "msg": {"state": "IDLE", "routeId": ""}
+                            }
+
+                    # 5. slam 接口处理 (地图配置)
                     elif msg_type == "slam":
                         if topic == "map_config":
                             local_ip = get_local_ip()
