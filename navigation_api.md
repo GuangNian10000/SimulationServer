@@ -32,20 +32,30 @@
 
 ### 2.1 获取所有导览点
 - **Type**: `slam`
-- **Topic**: `point_query_all` 或 `point_list` (不传 msg 时)
-- **Request**: `{"type": "slam", "topic": "point_query_all", "msg": {导览点实体 1，导览点实体 2}}`
-- **Response**: 返回点位对象数组。
+- **Topic**: `point_query_all` 或 `point_list`
+- **Request**: `{"type": "slam", "topic": "point_query_all", "msg": {}}`
+- **Response**: 
+  ```json
+  {
+    "type": "slam",
+    "topic": "point_query_all",
+    "msg": [
+      {"point_id": "1001", "name": "充电桩", "x": 0.0, "y": 0.0, "yaw": 0.0},
+      {"point_id": "1002", "name": "会议室", "x": 5.0, "y": -2.0, "yaw": 0.0}
+    ]
+  }
+  ```
 
 ### 2.2 添加或增量更新 (Upsert)
 - **Type**: `slam`
 - **Topic**: `point_add`
-- **说明**: **添加与更新共用此接口**。若 `point_id` 已存在则覆盖更新，不存在则新建。此操作为“增量”性质，不会影响数据库中其他的点位。
-- **Request**: `{"type": "slam", "topic": "point_add", "msg": {"point_id": 1002, "name": "会议室", "x": 5.0, "y": -2.0, "yaw": 0.0}}`
-- 
-### 2.5 删除导览点
+- **说明**: **添加与更新共用此接口**。若 `point_id` 已存在则覆盖更新，不存在则新建。
+- **Request**: `{"type": "slam", "topic": "point_add", "msg": {"point_id": "1002", "name": "会议室", "x": 5.0, "y": -2.0, "yaw": 0.0}}`
+
+### 2.3 删除导览点
 - **Type**: `slam`
 - **Topic**: `point_delete_by_pid`
-- **Request**: `{"type": "slam", "topic": "point_delete_by_pid", "msg": {"point_id": 1002}}`
+- **Request**: `{"type": "slam", "topic": "point_delete_by_pid", "msg": {"point_id": "1002"}}`
 
 ---
 
@@ -54,16 +64,28 @@
 ### 3.1 查询所有路线
 - **Type**: `slam`
 - **Topic**: `route_query_all`
-- **Response**: 返回路线对象数组（含 points ID 列表）。
+- **Request**: `{"type": "slam", "topic": "route_query_all", "msg": {}}`
+- **Response**: 
+  ```json
+  {
+    "type": "slam",
+    "topic": "route_query_all",
+    "msg": [
+      {"route_id": "2001", "route_name": "巡检路线", "points": ["1001", "1002"]}
+    ]
+  }
+  ```
 
 ### 3.2 添加/更新路线 (Upsert)
 - **Type**: `slam`
 - **Topic**: `route_add`
 - **说明**: 添加或更新路线。如果 `route_id` 已存在则更新点位序列，不存在则新建。
-- **Request**: `{"type": "slam", "topic": "route_add", "msg": {"route_id": 2001, "route_name": "演示路线", "points": [1001, 1002]}}`
+- **Request**: `{"type": "slam", "topic": "route_add", "msg": {"route_id": "2001", "route_name": "演示路线", "points": ["1001", "1002"]}}`
 
 ### 3.3 删除路线
-- **删除单条**: `{"type": "slam", "topic": "route_delete_by_rid", "msg": {"route_id": 2001}}`
+- **Type**: `slam`
+- **Topic**: `route_delete_by_rid`
+- **Request**: `{"type": "slam", "topic": "route_delete_by_rid", "msg": {"route_id": "2001"}}`
 
 ---
 
@@ -87,11 +109,11 @@
   }
   ```
 
-### 4.3 停止与急停
+### 4.2 停止与急停
 - **停止任务**: `{"type": "slam", "topic": "stop_position", "msg": {}}`
 - **急停**: `{"type": "slam", "topic": "stop_all", "msg": {}}`
 
-### 4.4 到达通知 (Server Push)
+### 4.3 到达通知 (Server Push)
 - **说明**: 机器人到达目的地后，服务端会主动推送此消息。
 - **Type**: `slam`
 - **Topic**: `arrived`
@@ -117,3 +139,41 @@
 - **Type**: `state`
 - **Topic**: `tts`
 - **Request**: `{"type": "state", "topic": "tts", "msg": {"text": "开始导览"}}`
+
+---
+
+## 6. 地图与感知 (Map & Perception)
+
+### 6.1 获取实时点云 (Point Cloud / Scan)
+- **Type**: `slam`
+- **Topic**: `point_cloud` 或 `get_scan`
+- **说明**: 获取当前环境激光雷达扫描的实时点云数据快照。
+- **Request**: `{"type": "slam", "topic": "point_cloud", "msg": {}}`
+- **Response**: 
+  ```json
+  {
+    "type": "slam",
+    "topic": "point_cloud",
+    "msg": [
+      {"x": 1.2, "y": 0.5},
+      {"x": 1.5, "y": -0.2}
+    ]
+  }
+  ```
+
+### 6.2 路径数据 (Path Planning)
+- **Type**: `slam`
+- **Topic**: `get_global_path` 或 `get_local_path`
+- **说明**: 获取机器人当前规划的全局或局部路径点集。
+- **Request**: `{"type": "slam", "topic": "get_global_path", "msg": {}}`
+- **Response**: 
+  ```json
+  {
+    "type": "slam",
+    "topic": "get_global_path",
+    "msg": [
+      {"x": 0.0, "y": 0.0},
+      {"x": 0.2, "y": 0.1}
+    ]
+  }
+  ```
