@@ -5,6 +5,7 @@ import uuid
 import socket
 import threading
 import time
+import random
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 
 # 配置日志格式，输出时间、级别及上下文。
@@ -371,6 +372,40 @@ async def handle_client(reader, writer):
                                     "occupied_thresh": 0.65,
                                     "free_thresh": 0.196
                                 }
+                            }
+                        elif topic in ["get_scan", "point_cloud"]:
+                            # 模拟点云数据：在机器人当前位置附近生成 60 个随机偏移点，模拟激光雷达扫描
+                            scan_points = [
+                                {
+                                    "x": round(robot_position["x"] + random.uniform(-5.0, 5.0), 3),
+                                    "y": round(robot_position["y"] + random.uniform(-5.0, 5.0), 3)
+                                }
+                                for _ in range(60)
+                            ]
+                            response = {
+                                "from": "arm",
+                                "to": from_node,
+                                "type": "slam",
+                                "topic": topic,
+                                "status": "ok",
+                                "msg": scan_points
+                            }
+                        elif topic in ["get_global_path", "get_local_path"]:
+                            # 模拟路径数据：从当前位置延伸的一串点
+                            path_points = [
+                                {
+                                    "x": round(robot_position["x"] + i * 0.2, 3),
+                                    "y": round(robot_position["y"] + i * 0.1, 3)
+                                }
+                                for i in range(15)
+                            ]
+                            response = {
+                                "from": "arm",
+                                "to": from_node,
+                                "type": "slam",
+                                "topic": topic,
+                                "status": "ok",
+                                "msg": path_points
                             }
                         elif topic in ["getPositionh", "get_position"]:
                             response = {
