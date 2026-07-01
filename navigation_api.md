@@ -109,9 +109,11 @@
   }
   ```
 
-### 4.2 停止与急停
-- **停止任务**: `{"type": "slam", "topic": "stop_position", "msg": {}}`
-- **急停**: `{"type": "slam", "topic": "stop_all", "msg": {}}`
+### 4.2 停止与取消
+- **停止当前运动**: `{"type": "slam", "topic": "stop_position", "msg": {}}`
+- **取消导航任务**: `{"type": "slam", "topic": "cancel_navigation", "msg": {}}`
+- **回充电桩**: `{"type": "slam", "topic": "go_to_dock", "msg": {}}`
+- **紧急停止 (锁定)**: `{"type": "slam", "topic": "stop_all", "msg": {}}`
 
 ### 4.3 到达通知 (Server Push)
 - **说明**: 机器人到达目的地后，服务端会主动推送此消息。
@@ -177,3 +179,117 @@
     ]
   }
   ```
+
+---
+
+## 7. 机器人手臂与姿态控制 (Arm & Posture)
+
+### 7.1 获取手臂动作列表
+- **Type**: `arm` 或 `webrtc`
+- **Topic**: `get_arm`
+- **Response**: 
+  ```json
+  {
+    "type": "arm",
+    "topic": "get_arm",
+    "msg": [
+      {"id": 1, "name": "握手", "time": 3.0},
+      {"id": 2, "name": "招手", "time": 2.5}
+    ]
+  }
+  ```
+
+### 7.2 获取姿态列表
+- **Type**: `arm` 或 `webrtc`
+- **Topic**: `get_posture`
+- **Response**: 
+  ```json
+  {
+    "type": "arm",
+    "topic": "get_posture",
+    "msg": [
+      {"id": 1, "technical_name": "stand", "display_name": "立正"},
+      {"id": 3, "technical_name": "sit", "display_name": "坐下"}
+    ]
+  }
+  ```
+
+### 7.3 执行手臂动作
+- **Type**: `arm`
+- **Topic**: `set_arm` 或 `play_arm`
+- **Request**: `{"type": "arm", "topic": "set_arm", "msg": {"id": 1}}`
+- **Response**: `{"receive": "true", "id": 1, "message": "手臂动作执行中"}`
+- **动作结束通知 (Push)**: `{"type": "arm", "topic": "arm_action_finished", "msg": {"id": 1}}`
+
+### 7.4 切换机器人姿态
+- **Type**: `arm`
+- **Topic**: `set_posture` 或 `play_posture`
+- **Request**: `{"type": "arm", "topic": "set_posture", "msg": {"id": 3}}`
+- **Response**: `{"receive": "true", "id": 3, "message": "姿态切换至: sit"}`
+
+### 7.5 停止动作
+- **Type**: `arm`
+- **Topic**: `stop_arm`
+- **Request**: `{"type": "arm", "topic": "stop_arm", "msg": {}}`
+
+---
+
+## 8. 导览核心状态查询 (Polling)
+
+### 8.1 获取核心状态
+- **Type**: `navigation` 或 `webrtc`
+- **Topic**: `get_status`
+- **说明**: 主动获取机器人当前的导航核心状态、目标点信息及硬件/系统就绪状态。
+- **Request**: `{"type": "navigation", "topic": "get_status", "msg": {}}`
+- **Response**:
+  ```json
+  {
+    "type": "navigation",
+    "topic": "get_status",
+    "msg": {
+      "state": "NAVIGATING",
+      "current_point_id": "point_2",
+      "ros_enabled": true
+    }
+  }
+  ```
+- **State 枚举值详解**:
+  - `IDLE`: 初始空闲状态。
+  - `NAV_READY`: 导航系统已就绪，已完成重定位或扫图，等待指令。
+  - `NAVIGATING`: 正在前往目标的平滑移动模拟中。
+  - `RELOCALIZING`: 正在执行 `set_position` 重定位模拟（通常持续 2 秒）。
+  - `EMERGENCY_STOP`: 急停触发状态，需手动清除任务恢复。
+  - `MAPPING`: 正在进行扫图环境构建。
+
+### 8.2 状态主动推送 (Status Push)
+- **Type**: `slam`
+- **Topic**: `nav_status`
+- **说明**: 每当导览状态 `state` 发生切换或目标点改变时，服务端会自动推送此快照消息。
+- **Message**:
+  ```json
+  {
+    "type": "slam",
+    "topic": "nav_status",
+    "msg": {
+      "state": "NAVIGATING",
+      "current_point_id": "1001",
+      "ros_enabled": true
+    }
+  }
+  ```
+
+---
+
+## 9. 扫图管理 (Mapping)
+
+### 9.1 开始扫图
+- **Type**: `slam`
+- **Topic**: `start_mapping`
+- **Request**: `{"type": "slam", "topic": "start_mapping", "msg": {}}`
+- **Response**: `{"receive": "true", "message": "进入扫图模式"}`
+
+### 9.2 停止扫图
+- **Type**: `slam`
+- **Topic**: `stop_mapping`
+- **Request**: `{"type": "slam", "topic": "stop_mapping", "msg": {}}`
+- **Response**: `{"receive": "true", "message": "退出扫图模式"}`

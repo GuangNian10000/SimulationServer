@@ -117,6 +117,44 @@ robot_position = {
     "yaw": 0.0
 }
 
+# 模拟机器人导航状态
+robot_state = "IDLE"
+current_target_point_id = None
+arm_state = "IDLE"
+current_posture = "stand"
+
+def change_state(new_state, point_id=None):
+    """更新机器人状态并记录日志，并主动推送到 phone 节点"""
+    global robot_state, current_target_point_id
+    robot_state = new_state
+    current_target_point_id = point_id
+    logging.info(f"\033[1;33m[状态变更]\033[0m -> \033[1;32m{robot_state}\033[0m (Point: {point_id})")
+    
+    # 主动推送状态给 phone 节点
+    push_msg = {
+        "from": "arm",
+        "to": "phone",
+        "type": "slam",
+        "topic": "nav_status",
+        "msg": {
+            "state": robot_state,
+            "current_point_id": current_target_point_id,
+            "ros_enabled": True
+        }
+    }
+    phone_writer = clients.get("phone")
+    if phone_writer:
+        try:
+            phone_writer.write((json.dumps(push_msg) + '\n').encode('utf-8'))
+        except:
+            pass
+
+def change_arm_state(new_state, action_id=None):
+    """更新手臂状态并记录日志"""
+    global arm_state
+    arm_state = new_state
+    logging.info(f"\033[1;33m[手臂状态变更]\033[0m -> \033[1;32m{arm_state}\033[0m (Action: {action_id})")
+
 def get_local_ip():
     """获取本机局域网 IP 地址"""
     try:
@@ -140,6 +178,7 @@ def run_http_server(port=8080):
     httpd.serve_forever()
 
 async def handle_client(reader, writer):
+    global current_posture
     addr = writer.get_extra_info('peername')
     logging.info(f"建立物理连接: {addr}")
     current_node = None
@@ -183,6 +222,8 @@ async def handle_client(reader, writer):
                     else:
                         msg_type = raw_type
 
+                    # 统一响应类型，兼容 webrtc 桥接模式。
+                    resp_type = msg_type
                     logging.info(f"ARM 业务逻辑处理: type={msg_type}, topic={topic}")
 
                     response = None
@@ -198,11 +239,24 @@ async def handle_client(reader, writer):
                             "msg": {"receive": "true", "status": "ok"}
                         }
 
-                    # 2. SLAM 相关接口 (根据 navigation_api.md 更新)
-                    elif msg_type == "slam":
+                    # 2. 导航核心状态 (Polling)
+                    elif topic == "get_status" or msg_type == "navigation":
+                        response = {
+                            "from": "arm", "to": from_node, "type": resp_type, "topic": "get_status",
+                            "msg": {
+                                "state": robot_state,
+                                "arm_state": arm_state,
+                                "current_posture": current_posture,
+                                "current_point_id": current_target_point_id,
+                                "ros_enabled": True
+                            }
+                        }
+
+                    # 3. SLAM 相关接口 (根据 navigation_api.md 更新)
+                    elif msg_type == "slam" or topic in ["start_point", "stop_position", "stop_all", "get_position", "set_position", "point_query_all", "point_list", "point_add", "point_delete_by_pid", "route_query_all", "route_add", "route_delete_by_rid", "map_config", "get_scan", "point_cloud", "get_global_path", "get_local_path", "start_mapping", "stop_mapping", "cancel_navigation", "go_to_dock"]:
                         if topic in ["point_query_all", "point_list"]:
                             response = {
-                                "from": "arm", "to": from_node, "type": "slam", "topic": topic,
+                                "from": "arm", "to": from_node, "type": resp_type, "topic": topic,
                                 "msg": endpoints
                             }
                         elif topic == "point_add":
@@ -231,7 +285,7 @@ async def handle_client(reader, writer):
                                 endpoints.append(new_point)
                                 res_msg = new_point
                             response = {
-                                "from": "arm", "to": from_node, "type": "slam", "topic": "point_add",
+                                "from": "arm", "to": from_node, "type": resp_type, "topic": "point_add",
                                 "msg": {"receive": "true", "data": res_msg}
                             }
                         elif topic == "point_delete_by_pid":
@@ -239,13 +293,13 @@ async def handle_client(reader, writer):
                             original_len = len(endpoints)
                             endpoints[:] = [p for p in endpoints if p["point_id"] != pid]
                             if len(endpoints) < original_len:
-                                response = {"from": "arm", "to": from_node, "type": "slam", "topic": "point_delete_by_pid", "msg": {"receive": "true", "point_id": pid}}
+                                response = {"from": "arm", "to": from_node, "type": resp_type, "topic": "point_delete_by_pid", "msg": {"receive": "true", "point_id": pid}}
                             else:
-                                response = {"from": "arm", "to": from_node, "type": "slam", "topic": "point_delete_by_pid", "msg": {"receive": "error", "message": f"点位 {pid} 不存在"}}
+                                response = {"from": "arm", "to": from_node, "type": resp_type, "topic": "point_delete_by_pid", "msg": {"receive": "error", "message": f"点位 {pid} 不存在"}}
                         
                         elif topic == "route_query_all":
                             response = {
-                                "from": "arm", "to": from_node, "type": "slam", "topic": topic,
+                                "from": "arm", "to": from_node, "type": resp_type, "topic": topic,
                                 "msg": routes
                             }
                         elif topic == "route_add":
@@ -271,7 +325,7 @@ async def handle_client(reader, writer):
                                 routes.append(new_route)
                                 res_msg = new_route
                             response = {
-                                "from": "arm", "to": from_node, "type": "slam", "topic": "route_add",
+                                "from": "arm", "to": from_node, "type": resp_type, "topic": "route_add",
                                 "msg": {"receive": "true", "data": res_msg}
                             }
                         elif topic == "route_delete_by_rid":
@@ -279,13 +333,16 @@ async def handle_client(reader, writer):
                             original_len = len(routes)
                             routes[:] = [r for r in routes if r["route_id"] != rid]
                             if len(routes) < original_len:
-                                response = {"from": "arm", "to": from_node, "type": "slam", "topic": "route_delete_by_rid", "msg": {"receive": "true", "route_id": rid}}
+                                response = {"from": "arm", "to": from_node, "type": resp_type, "topic": "route_delete_by_rid", "msg": {"receive": "true", "route_id": rid}}
                             else:
-                                response = {"from": "arm", "to": from_node, "type": "slam", "topic": "route_delete_by_rid", "msg": {"receive": "error", "message": "路线不存在"}}
+                                response = {"from": "arm", "to": from_node, "type": resp_type, "topic": "route_delete_by_rid", "msg": {"receive": "error", "message": "路线不存在"}}
                         
                         elif topic == "start_point":
                             pid = msg_body.get("point_id")
-                            # 确定目标位置：优先使用 msg 里的坐标，否则从 endpoints 找
+                            # 更新全局状态
+                            change_state("NAVIGATING", pid)
+
+                            # 确定目标位置...
                             target_x = msg_body.get("x")
                             target_y = msg_body.get("y")
                             target_yaw = msg_body.get("yaw")
@@ -298,7 +355,7 @@ async def handle_client(reader, writer):
                                     target_yaw = target_point.get("yaw", 0.0)
 
                             response = {
-                                "from": "arm", "to": from_node, "type": "slam",
+                                "from": "arm", "to": from_node, "type": resp_type,
                                 "topic": "start_point", "msg": {"receive": "true", "point_id": pid, "message": "已开始平滑导航模拟"}
                             }
 
@@ -314,6 +371,9 @@ async def handle_client(reader, writer):
                                 logging.info(f"\033[1;35m[导航开始]\033[0m 从 ({start_x}, {start_y}) 前往 ({tx}, {ty})")
 
                                 for i in range(1, steps + 1):
+                                    if robot_state != "NAVIGATING":
+                                        logging.info("\033[1;31m[导航中断]\033[0m 任务被取消或急停")
+                                        return
                                     await asyncio.sleep(interval)
                                     ratio = i / steps
                                     # 线性插值计算当前位置
@@ -323,7 +383,7 @@ async def handle_client(reader, writer):
 
                                 # 到达后推送通知
                                 push_msg = {
-                                    "from": "arm", "to": from_node, "type": "slam",
+                                    "from": "arm", "to": from_node, "type": resp_type,
                                     "topic": "arrived",
                                     "msg": {"receive": "true", "point_id": target_pid}
                                 }
@@ -331,20 +391,29 @@ async def handle_client(reader, writer):
                                     writer.write((json.dumps(push_msg) + '\n').encode('utf-8'))
                                     await writer.drain()
                                     logging.info(f"\033[1;35m[导航到达]\033[0m 已到达: {target_pid or '目标点'}")
+                                    change_state("NAV_READY")
                                 except:
                                     pass
 
                             asyncio.create_task(simulate_navigation(target_x, target_y, target_yaw, pid))
 
-                        elif topic == "stop_position":
-                            response = {"from": "arm", "to": from_node, "type": "slam", "topic": "stop_position", "msg": {"receive": "true", "message": "任务已停止"}}
+                        elif topic == "stop_position" or topic == "cancel_navigation":
+                            change_state("NAV_READY")
+                            response = {"from": "arm", "to": from_node, "type": resp_type, "topic": topic, "msg": {"receive": "true", "message": "任务已停止"}}
                         elif topic == "stop_all":
-                            response = {"from": "arm", "to": from_node, "type": "slam", "topic": "stop_all", "msg": {"receive": "true", "message": "急停已触发"}}
+                            change_state("EMERGENCY_STOP")
+                            change_arm_state("IDLE")
+                            response = {"from": "arm", "to": from_node, "type": resp_type, "topic": "stop_all", "msg": {"receive": "true", "message": "急停已触发"}}
+                        elif topic == "go_to_dock":
+                            change_state("NAVIGATING", "dock")
+                            response = {"from": "arm", "to": from_node, "type": resp_type, "topic": "go_to_dock", "msg": {"receive": "true", "message": "正在回充"}}
+                            # 模拟回充导航 (到 0,0)
+                            asyncio.create_task(simulate_navigation(0.0, 0.0, 0.0, "dock"))
 
                         elif topic == "map_config":
                             local_ip = get_local_ip()
                             response = {
-                                "from": "arm", "to": from_node, "type": "slam", "topic": "map_config",
+                                "from": "arm", "to": from_node, "type": resp_type, "topic": "map_config",
                                 "msg": {
                                     "receive": "true",
                                     "image": f"http://{local_ip}:8080/maps.pgm",
@@ -365,7 +434,7 @@ async def handle_client(reader, writer):
                                 for _ in range(60)
                             ]
                             response = {
-                                "from": "arm", "to": from_node, "type": "slam", "topic": topic,
+                                "from": "arm", "to": from_node, "type": resp_type, "topic": topic,
                                 "msg": scan_points
                             }
                         elif topic in ["get_global_path", "get_local_path"]:
@@ -378,22 +447,38 @@ async def handle_client(reader, writer):
                                 for i in range(15)
                             ]
                             response = {
-                                "from": "arm", "to": from_node, "type": "slam", "topic": topic,
+                                "from": "arm", "to": from_node, "type": resp_type, "topic": topic,
                                 "msg": path_points
                             }
                         elif topic in ["get_position", "getPositionh"]:
                             response = {
-                                "from": "arm", "to": from_node, "type": "slam", "topic": topic,
+                                "from": "arm", "to": from_node, "type": resp_type, "topic": topic,
                                 "msg": {"receive": "true", "x": robot_position["x"], "y": robot_position["y"], "yaw": robot_position["yaw"]}
                             }
                         elif topic in ["set_position", "setPosition"]:
                             try:
+                                change_state("RELOCALIZING")
                                 robot_position["x"] = float(msg_body.get("x", 0.0))
                                 robot_position["y"] = float(msg_body.get("y", 0.0))
                                 robot_position["yaw"] = float(msg_body.get("yaw", 0.0))
-                                response = {"from": "arm", "to": from_node, "type": "slam", "topic": topic, "msg": {"receive": "true"}}
-                            except:
-                                response = {"from": "arm", "to": from_node, "type": "slam", "topic": "error", "msg": {"receive": "error", "message": "位置格式错误"}}
+                                
+                                # 模拟重定位过程，2秒后恢复 NAV_READY
+                                async def finish_relocalization():
+                                    await asyncio.sleep(2.0)
+                                    if robot_state == "RELOCALIZING":
+                                        change_state("NAV_READY")
+                                
+                                asyncio.create_task(finish_relocalization())
+                                response = {"from": "arm", "to": from_node, "type": resp_type, "topic": topic, "msg": {"receive": "true"}}
+                            except Exception as e:
+                                response = {"from": "arm", "to": from_node, "type": resp_type, "topic": "error", "msg": {"receive": "error", "message": f"位置格式错误: {e}"}}
+
+                        elif topic == "start_mapping":
+                            change_state("MAPPING")
+                            response = {"from": "arm", "to": from_node, "type": resp_type, "topic": "start_mapping", "msg": {"receive": "true", "message": "进入扫图模式"}}
+                        elif topic == "stop_mapping":
+                            change_state("NAV_READY")
+                            response = {"from": "arm", "to": from_node, "type": resp_type, "topic": "stop_mapping", "msg": {"receive": "true", "message": "退出扫图模式"}}
 
                     # 3. 运行状态查询 (Type: offline)
                     elif msg_type == "offline":
@@ -419,7 +504,7 @@ async def handle_client(reader, writer):
                             }
 
                     # 5. 手臂动作与姿态 (支持 get/set 指令)
-                    elif topic in ["get_arm", "get_posture", "set_arm", "set_posture", "play_arm", "play_posture"] or msg_type in ["arm", "webrtc"]:
+                    elif topic in ["get_arm", "get_posture", "set_arm", "set_posture", "play_arm", "play_posture", "stop_arm"] or msg_type in ["arm", "webrtc"]:
                         if topic == "get_arm":
                             response = {
                                 "from": "arm", "to": from_node, "type": msg_type, "topic": "get_arm",
@@ -432,16 +517,50 @@ async def handle_client(reader, writer):
                             }
                         elif topic in ["set_arm", "play_arm"]:
                             arm_id = msg_body.get("id") or msg_body.get("arm_id")
+                            action = next((a for a in arm_actions if a["id"] == arm_id), None)
+                            dur = action["time"] if action else 2.0
+                            
+                            change_arm_state("BUSY", arm_id)
                             response = {
                                 "from": "arm", "to": from_node, "type": msg_type, "topic": topic,
                                 "msg": {"receive": "true", "id": arm_id, "message": "手臂动作执行中"}
                             }
+                            
+                            async def simulate_arm_action(aid, d):
+                                await asyncio.sleep(d)
+                                if arm_state == "BUSY":
+                                    change_arm_state("IDLE")
+                                    # 推送完成通知
+                                    push = {"from": "arm", "to": from_node, "type": msg_type, "topic": "arm_action_finished", "msg": {"receive": "true", "id": aid}}
+                                    try:
+                                        writer.write((json.dumps(push) + '\n').encode('utf-8'))
+                                        await writer.drain()
+                                    except: pass
+                            
+                            asyncio.create_task(simulate_arm_action(arm_id, dur))
+
                         elif topic in ["set_posture", "play_posture"]:
                             posture_id = msg_body.get("id") or msg_body.get("posture_id") or msg_body.get("posture_name")
+                            # 尝试匹配 technical_name
+                            target_p = next((p for p in postures if str(p["id"]) == str(posture_id) or p["technical_name"] == posture_id), None)
+                            if target_p:
+                                current_posture = target_p["technical_name"]
+                            
                             response = {
                                 "from": "arm", "to": from_node, "type": msg_type, "topic": topic,
-                                "msg": {"receive": "true", "id": posture_id, "message": "姿态切换中"}
+                                "msg": {"receive": "true", "id": posture_id, "message": f"姿态切换至: {current_posture}"}
                             }
+                        elif topic == "stop_arm":
+                            change_arm_state("IDLE")
+                            response = {"from": "arm", "to": from_node, "type": msg_type, "topic": "stop_arm", "msg": {"receive": "true"}}
+
+                    # 6. 其他硬件控制 (Type: chassis / sensor)
+                    elif msg_type == "chassis":
+                        if topic == "cmd_vel":
+                            vx = msg_body.get("x", 0.0)
+                            vaz = msg_body.get("yaw", 0.0)
+                            logging.info(f"\033[1;36m[底盘控制]\033[0m 线速度: {vx}, 角速度: {vaz}")
+                            response = {"from": "arm", "to": from_node, "type": "chassis", "topic": "cmd_vel", "msg": {"receive": "true"}}
 
                     # 保持旧接口兼容性 (可选)
                     elif msg_type == "location":
