@@ -342,17 +342,21 @@ async def handle_client(reader, writer):
                             # 更新全局状态
                             change_state("NAVIGATING", pid)
 
-                            # 确定目标位置...
-                            target_x = msg_body.get("x")
-                            target_y = msg_body.get("y")
-                            target_yaw = msg_body.get("yaw")
+                            # 确定目标位置，增加类型转换处理字符串输入
+                            try:
+                                target_x = float(msg_body.get("x")) if msg_body.get("x") is not None else None
+                                target_y = float(msg_body.get("y")) if msg_body.get("y") is not None else None
+                                target_yaw = float(msg_body.get("yaw")) if msg_body.get("yaw") is not None else None
+                            except (ValueError, TypeError):
+                                target_x, target_y, target_yaw = None, None, None
 
+                            # 如果提供了 point_id 且缺少坐标，则从预设点位中查找
                             if pid and (target_x is None or target_y is None):
                                 target_point = next((p for p in endpoints if p["point_id"] == pid), None)
                                 if target_point:
-                                    target_x = target_point.get("x", 0.0)
-                                    target_y = target_point.get("y", 0.0)
-                                    target_yaw = target_point.get("yaw", 0.0)
+                                    target_x = float(target_point.get("x", 0.0))
+                                    target_y = float(target_point.get("y", 0.0))
+                                    target_yaw = float(target_point.get("yaw", 0.0))
 
                             response = {
                                 "from": "arm", "to": from_node, "type": resp_type,
@@ -361,7 +365,9 @@ async def handle_client(reader, writer):
 
                             # 模拟平滑移动任务
                             async def simulate_navigation(tx, ty, tyaw, target_pid):
-                                if tx is None or ty is None: return
+                                if tx is None or ty is None:
+                                    logging.error("\033[1;31m[导航失败]\033[0m 目标坐标无效")
+                                    return
                                 
                                 start_x, start_y, start_yaw = robot_position["x"], robot_position["y"], robot_position["yaw"]
                                 duration = 5.0  # 模拟移动持续 5 秒
@@ -379,7 +385,8 @@ async def handle_client(reader, writer):
                                     # 线性插值计算当前位置
                                     robot_position["x"] = round(start_x + (tx - start_x) * ratio, 3)
                                     robot_position["y"] = round(start_y + (ty - start_y) * ratio, 3)
-                                    robot_position["yaw"] = round(start_yaw + (tyaw - start_yaw) * (ratio if tyaw is not None else 0), 3)
+                                    if tyaw is not None:
+                                        robot_position["yaw"] = round(start_yaw + (tyaw - start_yaw) * ratio, 3)
 
                                 # 到达后推送通知
                                 push_msg = {
