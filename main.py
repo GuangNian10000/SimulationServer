@@ -70,6 +70,46 @@ routes = [
     }
 ]
 
+# 模拟手臂动作假数据
+arm_actions = [
+    {"id": 1, "name": "握手", "time": 3.0},
+    {"id": 2, "name": "招手", "time": 2.5},
+    {"id": 3, "name": "敬礼", "time": 2.0},
+    {"id": 4, "name": "跳舞", "time": 5.0}
+]
+
+# 模拟机器人姿态假数据
+postures = [
+    {"id": 1, "technical_name": "stand", "display_name": "立正"},
+    {"id": 2, "technical_name": "rest", "display_name": "稍息"},
+    {"id": 3, "technical_name": "sit", "display_name": "坐下"},
+    {"id": 4, "technical_name": "squat", "display_name": "蹲下"},
+    {"id": 5, "technical_name": "bow", "display_name": "鞠躬"},
+    {"id": 6, "technical_name": "think", "display_name": "思考"},
+    {"id": 7, "technical_name": "lie", "display_name": "趴下"},
+    {"id": 8, "technical_name": "nod", "display_name": "点头"},
+    {"id": 9, "technical_name": "shake", "display_name": "摇头"},
+    {"id": 10, "technical_name": "stretch", "display_name": "伸懒腰"},
+    {"id": 11, "technical_name": "look_around", "display_name": "环视"},
+    {"id": 12, "technical_name": "sleep", "display_name": "睡眠"},
+    {"id": 13, "technical_name": "happy", "display_name": "开心"},
+    {"id": 14, "technical_name": "angry", "display_name": "生气"},
+    {"id": 15, "technical_name": "sad", "display_name": "难过"},
+    {"id": 16, "technical_name": "surprised", "display_name": "惊讶"},
+    {"id": 17, "technical_name": "dance", "display_name": "跳舞"},
+    {"id": 18, "technical_name": "look_up", "display_name": "抬头"},
+    {"id": 19, "technical_name": "look_down", "display_name": "低头"},
+    {"id": 20, "technical_name": "wave", "display_name": "挥手"},
+    {"id": 21, "technical_name": "salute", "display_name": "敬礼"},
+    {"id": 22, "technical_name": "turn_around", "display_name": "转身"},
+    {"id": 23, "technical_name": "show", "display_name": "展示"},
+    {"id": 24, "technical_name": "run", "display_name": "跑步"},
+    {"id": 25, "technical_name": "jump", "display_name": "跳跃"},
+    {"id": 26, "technical_name": "clap", "display_name": "鼓掌"},
+    {"id": 27, "technical_name": "point", "display_name": "指路"},
+    {"id": 28, "technical_name": "yoga", "display_name": "瑜伽"}
+]
+
 # 模拟机器人位置数据
 robot_position = {
     "x": 0.0,
@@ -342,6 +382,31 @@ async def handle_client(reader, writer):
                             response = {
                                 "from": "arm", "to": from_node, "type": "state", "topic": "tts",
                                 "msg": {"receive": "true", "message": f"正在播报: {text}"}
+                            }
+
+                    # 5. 手臂动作与姿态 (支持 get/set 指令)
+                    elif topic in ["get_arm", "get_posture", "set_arm", "set_posture", "play_arm", "play_posture"] or msg_type in ["arm", "webrtc"]:
+                        if topic == "get_arm":
+                            response = {
+                                "from": "arm", "to": from_node, "type": msg_type, "topic": "get_arm",
+                                "msg": arm_actions
+                            }
+                        elif topic == "get_posture":
+                            response = {
+                                "from": "arm", "to": from_node, "type": msg_type, "topic": "get_posture",
+                                "msg": postures
+                            }
+                        elif topic in ["set_arm", "play_arm"]:
+                            arm_id = msg_body.get("id") or msg_body.get("arm_id")
+                            response = {
+                                "from": "arm", "to": from_node, "type": msg_type, "topic": topic,
+                                "msg": {"receive": "true", "id": arm_id, "message": "手臂动作执行中"}
+                            }
+                        elif topic in ["set_posture", "play_posture"]:
+                            posture_id = msg_body.get("id") or msg_body.get("posture_id") or msg_body.get("posture_name")
+                            response = {
+                                "from": "arm", "to": from_node, "type": msg_type, "topic": topic,
+                                "msg": {"receive": "true", "id": posture_id, "message": "姿态切换中"}
                             }
 
                     # 保持旧接口兼容性 (可选)
