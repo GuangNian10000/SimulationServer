@@ -285,22 +285,56 @@ async def handle_client(reader, writer):
                         
                         elif topic == "start_point":
                             pid = msg_body.get("point_id")
+                            # 确定目标位置：优先使用 msg 里的坐标，否则从 endpoints 找
+                            target_x = msg_body.get("x")
+                            target_y = msg_body.get("y")
+                            target_yaw = msg_body.get("yaw")
+
+                            if pid and (target_x is None or target_y is None):
+                                target_point = next((p for p in endpoints if p["point_id"] == pid), None)
+                                if target_point:
+                                    target_x = target_point.get("x", 0.0)
+                                    target_y = target_point.get("y", 0.0)
+                                    target_yaw = target_point.get("yaw", 0.0)
+
                             response = {
                                 "from": "arm", "to": from_node, "type": "slam",
-                                "topic": "start_point", "msg": {"receive": "true", "point_id": pid, "message": "已开始导航"}
+                                "topic": "start_point", "msg": {"receive": "true", "point_id": pid, "message": "已开始平滑导航模拟"}
                             }
-                            # 模拟导航到达通知
-                            async def delayed_point_push():
-                                await asyncio.sleep(3)
+
+                            # 模拟平滑移动任务
+                            async def simulate_navigation(tx, ty, tyaw, target_pid):
+                                if tx is None or ty is None: return
+                                
+                                start_x, start_y, start_yaw = robot_position["x"], robot_position["y"], robot_position["yaw"]
+                                duration = 5.0  # 模拟移动持续 5 秒
+                                steps = 50      # 10Hz 更新频率
+                                interval = duration / steps
+
+                                logging.info(f"\033[1;35m[导航开始]\033[0m 从 ({start_x}, {start_y}) 前往 ({tx}, {ty})")
+
+                                for i in range(1, steps + 1):
+                                    await asyncio.sleep(interval)
+                                    ratio = i / steps
+                                    # 线性插值计算当前位置
+                                    robot_position["x"] = round(start_x + (tx - start_x) * ratio, 3)
+                                    robot_position["y"] = round(start_y + (ty - start_y) * ratio, 3)
+                                    robot_position["yaw"] = round(start_yaw + (tyaw - start_yaw) * (ratio if tyaw is not None else 0), 3)
+
+                                # 到达后推送通知
                                 push_msg = {
                                     "from": "arm", "to": from_node, "type": "slam",
                                     "topic": "arrived",
-                                    "msg": {"receive": "true", "point_id": pid}
+                                    "msg": {"receive": "true", "point_id": target_pid}
                                 }
-                                writer.write((json.dumps(push_msg) + '\n').encode('utf-8'))
-                                await writer.drain()
-                                logging.info(f"\033[1;35m[导航到达通知]\033[0m -> {from_node}: {push_msg}")
-                            asyncio.create_task(delayed_point_push())
+                                try:
+                                    writer.write((json.dumps(push_msg) + '\n').encode('utf-8'))
+                                    await writer.drain()
+                                    logging.info(f"\033[1;35m[导航到达]\033[0m 已到达: {target_pid or '目标点'}")
+                                except:
+                                    pass
+
+                            asyncio.create_task(simulate_navigation(target_x, target_y, target_yaw, pid))
 
                         elif topic == "stop_position":
                             response = {"from": "arm", "to": from_node, "type": "slam", "topic": "stop_position", "msg": {"receive": "true", "message": "任务已停止"}}
